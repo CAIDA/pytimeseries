@@ -43,9 +43,63 @@ Backend_init(BackendObject *self,
   return 0;
 }
 
+/* enabled? */
+static PyObject *
+Backend_get_enabled(BackendObject *self, void *closure)
+{
+  if (timeseries_backend_is_enabled(self->be) == 0) {
+    Py_RETURN_FALSE;
+  } else {
+    Py_RETURN_TRUE;
+  }
+}
+
+/* id */
+static PyObject *
+Backend_get_id(BackendObject *self, void *closure)
+{
+  return Py_BuildValue("k", timeseries_backend_get_id(self->be));
+}
+
+/* name */
+static PyObject *
+Backend_get_name(BackendObject *self, void *closure)
+{
+  return PYSTR_FROMSTR(timeseries_backend_get_name(self->be));
+}
+
 static PyMethodDef Backend_methods[] = {
 
   {NULL}  /* Sentinel */
+};
+
+static PyGetSetDef Backend_getsetters[] = {
+
+  /* enabled */
+  {
+    "enabled",
+    (getter)Backend_get_enabled, NULL,
+    "Enabled?",
+    NULL
+  },
+
+  /* id */
+  {
+    "id",
+    (getter)Backend_get_id, NULL,
+    "ID",
+    NULL
+  },
+
+  /* Name */
+  {
+    "name",
+    (getter)Backend_get_name, NULL,
+    "Name",
+    NULL
+  },
+
+  {NULL} /* Sentinel */
 };
 
 static PyTypeObject BackendType = {
@@ -78,7 +132,7 @@ static PyTypeObject BackendType = {
   0,		               /* tp_iternext */
   Backend_methods,             /* tp_methods */
   0,             /* tp_members */
-  0,                         /* tp_getset */
+  Backend_getsetters,                         /* tp_getset */
   0,                         /* tp_base */
   0,                         /* tp_dict */
   0,                         /* tp_descr_get */
