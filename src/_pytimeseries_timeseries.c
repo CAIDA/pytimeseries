@@ -25,6 +25,8 @@
 
 #include <timeseries.h>
 
+#include "_pytimeseries_backend.h"
+
 typedef struct {
   PyObject_HEAD
 
@@ -33,6 +35,8 @@ typedef struct {
 } TimeseriesObject;
 
 #define TimeseriesDocstring "Timeseries object"
+
+#define TimeseriesTypeName "_pytimeseries.Timeseries"
 
 
 static void
@@ -55,11 +59,10 @@ Timeseries_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     return NULL;
   }
 
-  if ((self->ts = timeseries_init()) == NULL)
-    {
-      Py_DECREF(self);
-      return NULL;
-    }
+  if ((self->ts = timeseries_init()) == NULL) {
+    Py_DECREF(self);
+    return NULL;
+  }
 
   return (PyObject *)self;
 }
@@ -71,14 +74,162 @@ Timeseries_init(TimeseriesObject *self,
   return 0;
 }
 
+/** Enable the given Backend */
+static PyObject *
+Timeseries_enable_backend(TimeseriesObject *self, PyObject *args)
+{
+  BackendObject *pybe = NULL;
+  const char *optstr = NULL;
+
+  /* get the Backend argument */
+  if (!PyArg_ParseTuple(args, "O!|s",
+                        _pytimeseries_backend_get_BackendType(),
+                        &pybe, optstr)) {
+    return NULL;
+  }
+
+  if (!pybe->be) {
+    PyErr_SetString(PyExc_RuntimeError, "Invalid Timeseries Backend object");
+    return NULL;
+  }
+
+  if (timeseries_enable_backend(pybe->be, optstr) == 0) {
+    Py_RETURN_TRUE;
+  }
+
+  Py_RETURN_FALSE;
+}
+
+/** Get the backend with the given ID */
+static PyObject *
+Timeseries_get_backend_by_id(TimeseriesObject *self, PyObject *args)
+{
+  int id = -1;
+  timeseries_backend_t *be;
+
+  /* get the ID argument */
+  if (!PyArg_ParseTuple(args, "i", &id)) {
+    return NULL;
+  }
+
+  if ((be = timeseries_get_backend_by_id(self->ts, id)) == NULL) {
+    Py_RETURN_NONE;
+  }
+
+  return Backend_new(be);
+}
+
+/** Get the backend with the given name */
+static PyObject *
+Timeseries_get_backend_by_name(TimeseriesObject *self, PyObject *args)
+{
+  const char *namestr;
+  timeseries_backend_t *be;
+
+  /* get the name argument */
+  if (!PyArg_ParseTuple(args, "s", &namestr)) {
+    return NULL;
+  }
+
+  if ((be = timeseries_get_backend_by_name(self->ts, namestr)) == NULL) {
+    Py_RETURN_NONE;
+  }
+
+  return Backend_new(be);
+}
+
+/** Get the all available backends */
+static PyObject *
+Timeseries_get_all_backends(TimeseriesObject *self)
+{
+  timeseries_backend_t **bes;
+  PyObject *list;
+  int i;
+
+  /* get the array from libtimeseries */
+  if ((bes = timeseries_get_all_backends(self->ts)) == NULL) {
+    return NULL;
+  }
+
+  /* create a list */
+  if((list = PyList_New(0)) == NULL)
+    return NULL;
+
+  for(i=0; i<TIMESERIES_BACKEND_ID_LAST; i++) {
+    if (bes[i] != NULL) {
+      /* add backend to list */
+      if(PyList_Append(list, Backend_new(bes[i])) == -1) {
+        return NULL;
+      }
+    }
+  }
+
+  return list;
+}
+
+/* Set a single data point */
+static PyObject *
+Timeseries_set_single(TimeseriesObject *self, PyObject *args)
+{
+  const char *key;
+  unsigned long long value;
+  unsigned long time;
+
+  if (!PyArg_ParseTuple(args, "sKk", &key, &value, &time)) {
+    return NULL;
+  }
+
+  if (timeseries_set_single(self->ts, key, value, time) != 0) {
+    Py_RETURN_FALSE;
+  }
+
+  Py_RETURN_TRUE;
+}
+
 static PyMethodDef Timeseries_methods[] = {
+
+  {
+    "enable_backend",
+    (PyCFunction)Timeseries_enable_backend,
+    METH_VARARGS,
+    "Enable the given timeseries Backend"
+  },
+
+  {
+    "get_backend_by_id",
+    (PyCFunction)Timeseries_get_backend_by_id,
+    METH_VARARGS,
+    "Get the backend with the given ID"
+  },
+
+  {
+    "get_backend_by_name",
+    (PyCFunction)Timeseries_get_backend_by_name,
+    METH_VARARGS,
+    "Get the backend with the given name"
+  },
+
+  {
+    "get_all_backends",
+    (PyCFunction)Timeseries_get_all_backends,
+    METH_NOARGS,
+    "Get a list of all available backends"
+  },
+
+  {
+    "set_single",
+    (PyCFunction)Timeseries_set_single,
+    METH_VARARGS,
+    "Set a value for a single timeseries key"
+  },
+
 
   {NULL}  /* Sentinel */
 };
 
 static PyTypeObject TimeseriesType = {
   PyVarObject_HEAD_INIT(NULL, 0)
-  "_pytimeseries.Timeseries",             /* tp_name */
+  TimeseriesTypeName,             /* tp_name */
   sizeof(TimeseriesObject), /* tp_basicsize */
   0,                                    /* tp_itemsize */
   (destructor)Timeseries_dealloc,        /* tp_dealloc */

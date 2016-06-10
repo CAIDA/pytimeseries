@@ -29,6 +29,8 @@
 
 #define BackendDocstring "Timeseries Backend object"
 
+#define BackendTypeName "_pytimeseries.Backend"
+
 static void
 Backend_dealloc(BackendObject *self)
 {
@@ -47,18 +49,18 @@ Backend_init(BackendObject *self,
 static PyObject *
 Backend_get_enabled(BackendObject *self, void *closure)
 {
-  if (timeseries_backend_is_enabled(self->be) == 0) {
-    Py_RETURN_FALSE;
-  } else {
+  if (timeseries_backend_is_enabled(self->be) != 0) {
     Py_RETURN_TRUE;
   }
+
+  Py_RETURN_FALSE;
 }
 
 /* id */
 static PyObject *
 Backend_get_id(BackendObject *self, void *closure)
 {
-  return Py_BuildValue("k", timeseries_backend_get_id(self->be));
+  return Py_BuildValue("i", timeseries_backend_get_id(self->be));
 }
 
 /* name */
@@ -66,6 +68,22 @@ static PyObject *
 Backend_get_name(BackendObject *self, void *closure)
 {
   return PYSTR_FROMSTR(timeseries_backend_get_name(self->be));
+}
+
+static PyObject *
+Backend_repr(PyObject *pyself)
+{
+  BackendObject *self = (BackendObject *)pyself;
+  PyObject *arg_tuple = Py_BuildValue("OOO",
+                                      Backend_get_id(self, NULL),
+                                      Backend_get_name(self, NULL),
+                                      Backend_get_enabled(self, NULL));
+
+  PyObject *pystr =
+    PYSTR_FROMSTR("<"BackendTypeName" (id: %i, name: %s, enabled: %s)>");
+
+  return
+    PyString_Format(pystr, arg_tuple);
 }
 
 static PyMethodDef Backend_methods[] = {
@@ -104,7 +122,7 @@ static PyGetSetDef Backend_getsetters[] = {
 
 static PyTypeObject BackendType = {
   PyVarObject_HEAD_INIT(NULL, 0)
-  "_pytimeseries.Backend",             /* tp_name */
+  BackendTypeName,             /* tp_name */
   sizeof(BackendObject), /* tp_basicsize */
   0,                                    /* tp_itemsize */
   (destructor)Backend_dealloc,        /* tp_dealloc */
@@ -112,7 +130,7 @@ static PyTypeObject BackendType = {
   0,                                    /* tp_getattr */
   0,                                    /* tp_setattr */
   0,                                    /* tp_compare */
-  0,                                    /* tp_repr */
+  Backend_repr,                                    /* tp_repr */
   0,                                    /* tp_as_number */
   0,                                    /* tp_as_sequence */
   0,                                    /* tp_as_mapping */
