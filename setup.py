@@ -3,9 +3,8 @@ from setuptools import setup, Extension
 _pytimeseries_module = Extension("_pytimeseries",
                                  libraries=["timeseries"],
                                  sources=["src/_pytimeseries_module.c",
-                                          "src/_pytimeseries_timeseries.c"])
-                                          #"src/_pytimeseries_kp.c",
-                                          #"src/_pytimeseries_backend.c"])
+                                          "src/_pytimeseries_timeseries.c",
+                                          "src/_pytimeseries_backend.c"])
 
 setup(name="pytimeseries",
       description="A Python interface to libtimeseries",

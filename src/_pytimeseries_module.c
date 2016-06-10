@@ -24,14 +24,15 @@
 #include <Python.h>
 
 #include "_pytimeseries_timeseries.h"
+#include "_pytimeseries_backend.h"
 
 static PyMethodDef module_methods[] = {
     {NULL}  /* Sentinel */
 };
 
-#define ADD_OBJECT(objname)                                             \
+#define ADD_OBJECT(modname, objname)                                             \
   do {                                                                  \
-    if ((obj = _pytimeseries_timeseries_get_##objname##Type()) == NULL)   \
+    if ((obj = _pytimeseries_##modname##_get_##objname##Type()) == NULL)   \
       return NULL;                                                      \
     if (PyType_Ready(obj) < 0)                                          \
       return NULL;                                                      \
@@ -76,7 +77,10 @@ static PyObject *moduleinit(void)
     return NULL;
 
   /* timeseries object */
-  ADD_OBJECT(Timeseries);
+  ADD_OBJECT(timeseries, Timeseries);
+
+  /* timeseries backend object */
+  ADD_OBJECT(backend, Backend);
 
   return m;
 }
