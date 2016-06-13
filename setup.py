@@ -12,7 +12,7 @@ setup(name="pytimeseries",
       version="0.2.0",
       author="Alistair King",
       author_email="corsaro-info@caida.org",
-      url="http://github.com/CAIDA/libtimeseries",
+      url="http://github.com/CAIDA/pytimeseries",
       license="GPLv3",
       classifiers=[
           'Development Status :: 5 - Production/Stable',
