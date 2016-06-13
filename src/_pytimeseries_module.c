@@ -25,6 +25,7 @@
 
 #include "_pytimeseries_timeseries.h"
 #include "_pytimeseries_backend.h"
+#include "_pytimeseries_kp.h"
 
 static PyMethodDef module_methods[] = {
     {NULL}  /* Sentinel */
@@ -81,6 +82,9 @@ static PyObject *moduleinit(void)
 
   /* timeseries backend object */
   ADD_OBJECT(backend, Backend);
+
+  /* timeseries key package object */
+  ADD_OBJECT(kp, KeyPackage);
 
   return m;
 }

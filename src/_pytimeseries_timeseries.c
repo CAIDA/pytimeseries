@@ -26,6 +26,7 @@
 #include <timeseries.h>
 
 #include "_pytimeseries_backend.h"
+#include "_pytimeseries_kp.h"
 
 typedef struct {
   PyObject_HEAD
@@ -42,10 +43,9 @@ typedef struct {
 static void
 Timeseries_dealloc(TimeseriesObject *self)
 {
-  if(self->ts != NULL)
-    {
+  if (self->ts != NULL) {
       timeseries_free(&self->ts);
-    }
+  }
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -186,6 +186,26 @@ Timeseries_set_single(TimeseriesObject *self, PyObject *args)
   Py_RETURN_TRUE;
 }
 
+/* Create a new key package */
+static PyObject *
+Timeseries_new_keypackage(TimeseriesObject *self,
+                          PyObject *args, PyObject *keywds)
+{
+  static char *kwlist[] = {"reset", NULL};
+  int reset = 0;
+  timeseries_kp_t *kp;
+
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "|i", kwlist, &reset)) {
+    return NULL;
+  }
+
+  if ((kp = timeseries_kp_init(self->ts, reset)) == NULL) {
+    return NULL;
+  }
+
+  return KeyPackage_new((PyObject*)self, kp);
+}
+
 static PyMethodDef Timeseries_methods[] = {
 
   {
@@ -221,6 +241,13 @@ static PyMethodDef Timeseries_methods[] = {
     (PyCFunction)Timeseries_set_single,
     METH_VARARGS,
     "Set a value for a single timeseries key"
+  },
+
+  {
+    "new_keypackage",
+    (PyCFunction)Timeseries_new_keypackage,
+    METH_VARARGS | METH_KEYWORDS,
+    "Create a new Key Package"
   },
 
 
