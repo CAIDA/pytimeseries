@@ -180,10 +180,11 @@ Timeseries_set_single(TimeseriesObject *self, PyObject *args)
   }
 
   if (timeseries_set_single(self->ts, key, value, time) != 0) {
-    Py_RETURN_FALSE;
+    PyErr_SetString(PyExc_RuntimeError, "Failed to set single key");
+    return NULL;
   }
 
-  Py_RETURN_TRUE;
+  Py_RETURN_NONE;
 }
 
 /* Create a new key package */
