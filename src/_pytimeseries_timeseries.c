@@ -84,7 +84,7 @@ Timeseries_enable_backend(TimeseriesObject *self, PyObject *args)
   /* get the Backend argument */
   if (!PyArg_ParseTuple(args, "O!|s",
                         _pytimeseries_backend_get_BackendType(),
-                        &pybe, optstr)) {
+                        &pybe, &optstr)) {
     return NULL;
   }
 

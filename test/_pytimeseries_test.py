@@ -31,7 +31,13 @@ be = ts.get_backend_by_name("ascii")
 print "Got backend: %d, %s (%s)" % (be.id, be.name, be.enabled)
 print
 
-# try to enable the ascii backend
+# try to enable the ascii backend with options
+print "Enabling ASCII backend (with ignored options):"
+print ts.enable_backend(be, "ignored options")
+print be
+print
+
+# enable the ascii backend
 print "Enabling ASCII backend:"
 print ts.enable_backend(be)
 print be
