@@ -1,0 +1,21 @@
+# Sample configuration file for the TSK Proxy
+
+[logging]
+
+# Verbosity of logging used.
+loglevel = DEBUG
+
+[timeseries]
+
+# libtimeseries backends to enable (comma-separated)
+backends = ascii
+
+# arguments to pass to the "ascii" libtimeseries backend
+ascii-opts =
+
+[kafka]
+
+brokers = localhost:9092
+use_rdkafka = True
+
+topic = tsk-test.*

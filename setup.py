@@ -1,4 +1,4 @@
-from setuptools import setup, Extension
+from setuptools import setup, Extension, find_packages
 
 _pytimeseries_module = Extension("_pytimeseries",
                                  libraries=["timeseries"],
@@ -25,4 +25,10 @@ setup(name="pytimeseries",
           'Operating System :: POSIX',
       ],
       keywords='_pytimeseries pytimeseries timeseries graphite',
-      ext_modules=[_pytimeseries_module, ])
+      ext_modules=[_pytimeseries_module, ],
+      packages=find_packages(),
+      entry_points={'console_scripts': [
+          'pytsk-proxy=pytimeseries.tsk.proxy:main'
+      ]},
+      install_requires=['pykafka', 'python-snappy']
+      )
