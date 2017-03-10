@@ -192,15 +192,29 @@ static PyObject *
 Timeseries_new_keypackage(TimeseriesObject *self,
                           PyObject *args, PyObject *keywds)
 {
-  static char *kwlist[] = {"reset", NULL};
+  static char *kwlist[] = {
+    "reset", //
+    "disable", //
+    NULL //
+  };
   int reset = 0;
+  int disable = 0;
   timeseries_kp_t *kp;
 
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "|i", kwlist, &reset)) {
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "|ii", kwlist,
+                                   &reset, &disable)) {
     return NULL;
   }
 
-  if ((kp = timeseries_kp_init(self->ts, reset)) == NULL) {
+  int flags = 0;
+  if (reset) {
+    flags |= TIMESERIES_KP_RESET;
+  }
+  if (disable) {
+    flags |= TIMESERIES_KP_DISABLE;
+  }
+
+  if ((kp = timeseries_kp_init(self->ts, flags)) == NULL) {
     return NULL;
   }
 
