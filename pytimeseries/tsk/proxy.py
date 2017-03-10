@@ -5,12 +5,16 @@ import os
 import pykafka
 import _pytimeseries
 import signal
+import struct
 import sys
 
+HEADER_MAGIC_LEN = 8
+
+TSKBATCH_VERSION = 0
 
 class Proxy:
 
-    def __init__(self, config_file):
+    def __init__(self, config_file, reset_offsets):
         self.config_file = os.path.expanduser(config_file)
 
         self.config = None
@@ -27,7 +31,7 @@ class Proxy:
 
         self.kc = None
         self.consumer = None
-        self._init_kafka()
+        self._init_kafka(reset_offsets)
 
     def _load_config(self):
         self.config = ConfigParser.ConfigParser()
@@ -50,18 +54,27 @@ class Proxy:
                 logging.error("Could not enable TS backend %s" % name)
             opts = self.config.get('timeseries', name + '-opts')
             self.ts.enable_backend(be, opts)
+        self.kp = self.ts.new_keypackage(reset=False)
 
-    def _init_kafka(self):
+    def _init_kafka(self, reset_offsets=False):
         # connect to kafka
         if self.config.get('kafka', 'use_rdkafka') == 'True':
             use_rdkafka = True
         else:
             use_rdkafka = False
         self.kc = pykafka.KafkaClient(hosts=self.config.get('kafka', 'brokers'))
-        # TODO: use balanced consumer
-        self.consumer = self.kc.topics[self.config.get('kafka', 'topic')]\
-            .get_simple_consumer(use_rdkafka=use_rdkafka,
-                                 consumer_timeout_ms=10000)
+        topic_name = "%s.%s" % (self.config.get('kafka', 'topic_prefix'),
+                                self.config.get('kafka', 'channel'))
+        self.consumer = self.kc.topics[topic_name]\
+            .get_balanced_consumer(self.config.get('kafka', 'consumer_group'),
+                                   managed=True, use_rdkafka=use_rdkafka,
+                                   auto_commit_enable=True,
+                                   auto_offset_reset=pykafka.common.OffsetType.EARLIEST,
+                                   consumer_timeout_ms=10000)
+
+        if reset_offsets:
+            logging.info("Resetting commited offsets")
+            self.consumer.reset_offsets()
 
     def _stop_handler(self, _signo, _stack_frame):
         logging.info("Caught signal, shutting down at next opportunity")
@@ -75,21 +88,75 @@ class Proxy:
         logging.error("NOT IMPLEMENTED")
         self.shutdown += 1
 
+    def _handle_msg(self, msgbuf):
+        time, version, channel, offset = self._parse_header(msgbuf)
+        if version != TSKBATCH_VERSION:
+            logging.error("Message with unknown version %d, expecting %d" %
+                          (version, TSKBATCH_VERSION))
+            return
+        if channel != self.config.get('kafka', 'channel'):
+            logging.error("Message with unknown channel %s, expecting %s" %
+                          (channel, self.config.get('kafka', 'channel')))
+            return
+
+        msgbuflen = len(msgbuf)
+        active_keys = []
+        while offset < msgbuflen:
+            (idx, offset) = self._parse_kv(msgbuf, offset)
+            active_keys.append(idx)
+
+        # now flush the key package
+        logging.debug("Flushing KP at %d with %d keys enabled (%d total)" %
+                      (time, self.kp.enabled_size, self.kp.size))
+        self.kp.flush(time)
+
+        # disable all the keys in the KP (TODO: move this to libtimeseries)
+        logging.debug("Disabling active keys in KP (%d keys)" % len(active_keys))
+        for idx in active_keys:
+            self.kp.disable_key(idx)
+
+    @staticmethod
+    def _parse_header(msgbuf):
+        # skip over the TSKBATCH magic
+        offset = HEADER_MAGIC_LEN
+
+        (version, time, chanlen) = \
+            struct.unpack_from("!BLH", msgbuf, offset)
+        offset += 1 + 4 + 2
+
+        (channel,) = struct.unpack_from("%ds" % chanlen, msgbuf, offset)
+        offset += chanlen
+
+        return time, version, channel, offset
+
+    def _parse_kv(self, msgbuf, offset):
+        (keylen,) = struct.unpack_from("!H", msgbuf, offset)
+        offset += 2
+        (key, val, ) = struct.unpack_from("!%dsQ" % keylen, msgbuf, offset)
+        offset += keylen + 8
+
+        idx = self.kp.get_key(key)
+        if idx is None:
+            idx = self.kp.add_key(key)
+        else:
+            self.kp.enable_key(idx)
+        self.kp.set(idx, val)
+
+        return (idx, offset)
+
     def run(self):
         logging.info("TSK Proxy starting...")
         while True:
             # if we have been asked to shut down, do it now
             if self.shutdown:
                 return
-
+            # process some messages!
             for msg in self.consumer:
                 if msg is not None:
-                    self.handle_msg(msg.value)
+                    # will retry until successful...
+                    self._handle_msg(buffer(msg.value))
                 if self.shutdown:
                     break
-
-    def handle_msg(self, msgbuf):
-        pass
 
 
 def main():
@@ -101,7 +168,11 @@ def main():
                         nargs='?', required=True,
                         help='Configuration filename')
 
+    parser.add_argument('-r',  '--reset-offsets',
+                        action='store_true', required=False,
+                        help='Reset committed offsets')
+
     opts = vars(parser.parse_args())
 
-    tsk_proxy = Proxy(opts['config_file'])
+    tsk_proxy = Proxy(**opts)
     tsk_proxy.run()

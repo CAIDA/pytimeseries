@@ -16,6 +16,16 @@ ascii-opts =
 [kafka]
 
 brokers = localhost:9092
-use_rdkafka = True
 
-topic = tsk-test.*
+# it seems the managed balanced consumer doesn't support rdkafka :/
+use_rdkafka = False
+
+topic_prefix = tsk-test
+
+# TSK channel to subscribe to (it seems pykafka doesn't support wildcard topic
+# subscriptions)
+channel = test-channel
+
+# allows multiple tsk-proxy instances to be used to load balance the incoming
+# messages.
+consumer_group = tsk-proxy
