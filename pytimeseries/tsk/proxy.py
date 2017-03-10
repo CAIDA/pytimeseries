@@ -12,6 +12,7 @@ HEADER_MAGIC_LEN = 8
 
 TSKBATCH_VERSION = 0
 
+
 class Proxy:
 
     def __init__(self, config_file, reset_offsets):
@@ -27,6 +28,7 @@ class Proxy:
 
         # initialize libtimeseries
         self.ts = None
+        self.current_time = None
         self._init_timeseries()
 
         self.kc = None
@@ -54,7 +56,7 @@ class Proxy:
                 logging.error("Could not enable TS backend %s" % name)
             opts = self.config.get('timeseries', name + '-opts')
             self.ts.enable_backend(be, opts)
-        self.kp = self.ts.new_keypackage(reset=False)
+        self.kp = self.ts.new_keypackage(reset=False, disable=True)
 
     def _init_kafka(self, reset_offsets=False):
         # connect to kafka
@@ -88,6 +90,21 @@ class Proxy:
         logging.error("NOT IMPLEMENTED")
         self.shutdown += 1
 
+    def _maybe_flush(self, time=None):
+        # if this is not our first message, and this time is different than
+        # the current time, we need to dump the KP
+        if not self.current_time:
+            self.current_time = time
+        elif not time or (time != self.current_time):
+            # now flush the key package
+            logging.debug("Flushing KP at %d with %d keys enabled (%d total)" %
+                          (self.current_time, self.kp.enabled_size,
+                           self.kp.size))
+            self.kp.flush(self.current_time)
+            # all keys are reset now
+            assert(self.kp.enabled_size == 0)
+            self.current_time = time
+
     def _handle_msg(self, msgbuf):
         time, version, channel, offset = self._parse_header(msgbuf)
         if version != TSKBATCH_VERSION:
@@ -99,21 +116,11 @@ class Proxy:
                           (channel, self.config.get('kafka', 'channel')))
             return
 
+        self._maybe_flush(time)
+
         msgbuflen = len(msgbuf)
-        active_keys = []
         while offset < msgbuflen:
-            (idx, offset) = self._parse_kv(msgbuf, offset)
-            active_keys.append(idx)
-
-        # now flush the key package
-        logging.debug("Flushing KP at %d with %d keys enabled (%d total)" %
-                      (time, self.kp.enabled_size, self.kp.size))
-        self.kp.flush(time)
-
-        # disable all the keys in the KP (TODO: move this to libtimeseries)
-        logging.debug("Disabling active keys in KP (%d keys)" % len(active_keys))
-        for idx in active_keys:
-            self.kp.disable_key(idx)
+            offset = self._parse_kv(msgbuf, offset)
 
     @staticmethod
     def _parse_header(msgbuf):
@@ -142,13 +149,14 @@ class Proxy:
             self.kp.enable_key(idx)
         self.kp.set(idx, val)
 
-        return (idx, offset)
+        return offset
 
     def run(self):
         logging.info("TSK Proxy starting...")
         while True:
             # if we have been asked to shut down, do it now
             if self.shutdown:
+                self._maybe_flush()
                 return
             # process some messages!
             for msg in self.consumer:
@@ -157,7 +165,6 @@ class Proxy:
                     self._handle_msg(buffer(msg.value))
                 if self.shutdown:
                     break
-
 
 def main():
     parser = argparse.ArgumentParser(description="""
