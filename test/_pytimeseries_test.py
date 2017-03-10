@@ -50,9 +50,11 @@ print ts.set_single("a.test.key", 12345, 532051200)
 print
 
 # create a key package
-print "Creating 3 Key Packages:"
+print "Creating 5 Key Packages:"
 print ts.new_keypackage(True)
 print ts.new_keypackage(False)
+print ts.new_keypackage(disable=True)
+print ts.new_keypackage(reset=True, disable=True)
 kp = ts.new_keypackage(reset=True)
 print kp
 print
