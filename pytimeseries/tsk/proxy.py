@@ -67,8 +67,13 @@ class Proxy:
         self.kc = pykafka.KafkaClient(hosts=self.config.get('kafka', 'brokers'))
         topic_name = "%s.%s" % (self.config.get('kafka', 'topic_prefix'),
                                 self.config.get('kafka', 'channel'))
+        # it seems the managed consumer doesn't do well with multiple topics on
+        # a single consumer group, so we namespace our group to include the
+        # topic name
+        consumer_group = "%s.%s" % (self.config.get('kafka', 'consumer_group'),
+                                    topic_name)
         self.consumer = self.kc.topics[topic_name]\
-            .get_balanced_consumer(self.config.get('kafka', 'consumer_group'),
+            .get_balanced_consumer(consumer_group,
                                    managed=True, use_rdkafka=use_rdkafka,
                                    auto_commit_enable=True,
                                    auto_offset_reset=pykafka.common.OffsetType.EARLIEST,
