@@ -163,9 +163,9 @@ class Proxy:
         logging.info("TSK Proxy starting...")
         logging.info("Waiting 20s for other workers to start...")
         time.sleep(20)
-        logging.info("Forcing a rebalance")
-        self.consumer._rebalance()
         while True:
+            logging.info("Forcing a rebalance")
+            self.consumer._rebalance()
             # if we have been asked to shut down, do it now
             if self.shutdown:
                 self._maybe_flush()
