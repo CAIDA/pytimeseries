@@ -30,5 +30,5 @@ setup(name="pytimeseries",
       entry_points={'console_scripts': [
           'pytsk-proxy=pytimeseries.tsk.proxy:main'
       ]},
-      install_requires=['pykafka', 'python-snappy']
+      install_requires=['pykafka', 'python-snappy', 'futures']
       )
