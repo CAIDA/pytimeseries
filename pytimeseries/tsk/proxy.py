@@ -1,4 +1,5 @@
 import argparse
+import concurrent.futures
 import ConfigParser
 import logging
 import os
@@ -7,6 +8,7 @@ import _pytimeseries
 import signal
 import struct
 import sys
+import time
 
 HEADER_MAGIC_LEN = 8
 
@@ -15,8 +17,9 @@ TSKBATCH_VERSION = 0
 
 class Proxy:
 
-    def __init__(self, config_file, reset_offsets):
+    def __init__(self, config_file, reset_offsets, executor_id):
         self.config_file = os.path.expanduser(config_file)
+        self.id = executor_id
 
         self.config = None
         self._load_config()
@@ -43,7 +46,7 @@ class Proxy:
 
     def _configure_logging(self):
         logging.basicConfig(level=self.config.get('logging', 'loglevel'),
-                            format='%(asctime)s|TSK|%(levelname)s: %(message)s',
+                            format='%(asctime)s|TSK|EX' + str(self.id) + '|%(levelname)s: %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S')
 
     def _init_timeseries(self):
@@ -158,6 +161,10 @@ class Proxy:
 
     def run(self):
         logging.info("TSK Proxy starting...")
+        logging.info("Waiting 20s for other workers to start...")
+        time.sleep(20)
+        logging.info("Forcing a rebalance")
+        self.consumer._rebalance()
         while True:
             # if we have been asked to shut down, do it now
             if self.shutdown:
@@ -170,6 +177,12 @@ class Proxy:
                     self._handle_msg(buffer(msg.value))
                 if self.shutdown:
                     break
+
+
+def run_thread(args, executor_id):
+    proxy = Proxy(executor_id=executor_id, **args)
+    proxy.run()
+
 
 def main():
     parser = argparse.ArgumentParser(description="""
@@ -184,7 +197,20 @@ def main():
                         action='store_true', required=False,
                         help='Reset committed offsets')
 
+    parser.add_argument('-p',  '--thread-cnt',
+                        nargs='?', required=False, default=1, type=int,
+                        help='Number of worker threads to run')
+
     opts = vars(parser.parse_args())
 
-    tsk_proxy = Proxy(**opts)
-    tsk_proxy.run()
+    args = {
+        'config_file': opts['config_file'],
+        'reset_offsets': opts['reset_offsets'],
+    }
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=opts['thread_cnt']) \
+            as executor:
+        futures = [executor.submit(run_thread, args, id)
+                   for id in range(0, opts['thread_cnt'])]
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
