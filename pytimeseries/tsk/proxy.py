@@ -77,7 +77,9 @@ class Proxy:
                                     topic_name)
         self.consumer = self.kc.topics[topic_name]\
             .get_balanced_consumer(consumer_group,
-                                   managed=True, use_rdkafka=use_rdkafka,
+                                   managed=False, use_rdkafka=use_rdkafka,
+                                   zookeeper_connect=self.config.get('kafka',
+                                                                     'zookeeper'),
                                    auto_commit_enable=True,
                                    auto_offset_reset=pykafka.common.OffsetType.EARLIEST,
                                    consumer_timeout_ms=10000)
