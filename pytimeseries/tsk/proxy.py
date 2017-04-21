@@ -108,7 +108,10 @@ class Proxy:
             logging.debug("Flushing KP at %d with %d keys enabled (%d total)" %
                           (self.current_time, self.kp.enabled_size,
                            self.kp.size))
-            self.kp.flush(self.current_time)
+            try:
+                self.kp.flush(self.current_time)
+            except RuntimeError:
+                logging.error("Failed to flush KP")
             # all keys are reset now
             assert(self.kp.enabled_size == 0)
             self.current_time = time
