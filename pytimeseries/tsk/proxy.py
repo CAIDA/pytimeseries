@@ -108,7 +108,10 @@ class Proxy:
             logging.debug("Flushing KP at %d with %d keys enabled (%d total)" %
                           (self.current_time, self.kp.enabled_size,
                            self.kp.size))
-            self.kp.flush(self.current_time)
+            try:
+                self.kp.flush(self.current_time)
+            except RuntimeError:
+                logging.error("Failed to flush KP")
             # all keys are reset now
             assert(self.kp.enabled_size == 0)
             self.current_time = time
@@ -163,12 +166,19 @@ class Proxy:
         logging.info("TSK Proxy starting...")
         logging.info("Waiting 20s for other workers to start...")
         time.sleep(20)
+        since_rebalance=0
         while True:
-            logging.info("Forcing a rebalance")
-            self.consumer._rebalance()
+            if since_rebalance >= 30:
+                logging.info("Forcing a rebalance")
+                self.consumer._rebalance()
+                since_rebalance = 0
+            since_rebalance += 1
+            logging.info("Forcing a flush")
+            self._maybe_flush()
             # if we have been asked to shut down, do it now
             if self.shutdown:
                 self._maybe_flush()
+                logging.info("Shutdown complete")
                 return
             # process some messages!
             for msg in self.consumer:
@@ -207,6 +217,12 @@ def main():
         'config_file': opts['config_file'],
         'reset_offsets': opts['reset_offsets'],
     }
+
+    # ignore sigint because our children will handle it, shut down and then
+    # we will...
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=opts['thread_cnt']) \
             as executor:
