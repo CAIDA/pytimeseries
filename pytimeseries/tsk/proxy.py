@@ -215,6 +215,12 @@ def main():
         'reset_offsets': opts['reset_offsets'],
     }
 
+    # ignore sigint because our children will handle it, shut down and then
+    # we will...
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
     with concurrent.futures.ProcessPoolExecutor(max_workers=opts['thread_cnt']) \
             as executor:
         futures = [executor.submit(run_thread, args, id)
