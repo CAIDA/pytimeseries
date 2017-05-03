@@ -1,14 +1,12 @@
 import argparse
-import concurrent.futures
 import ConfigParser
+import confluent_kafka
 import logging
 import os
-import pykafka
 import _pytimeseries
 import signal
 import struct
 import sys
-import time
 
 HEADER_MAGIC_LEN = 8
 
@@ -17,17 +15,12 @@ TSKBATCH_VERSION = 0
 
 class Proxy:
 
-    def __init__(self, config_file, reset_offsets, executor_id):
+    def __init__(self, config_file, reset_offsets, partition=None):
         self.config_file = os.path.expanduser(config_file)
-        self.id = executor_id
+        self.partition = partition
 
         self.config = None
         self._load_config()
-
-        self.shutdown = 0
-        signal.signal(signal.SIGTERM, self._stop_handler)
-        signal.signal(signal.SIGINT, self._stop_handler)
-        signal.signal(signal.SIGHUP, self._hup_handler)
 
         # initialize libtimeseries
         self.ts = None
@@ -38,6 +31,11 @@ class Proxy:
         self.consumer = None
         self._init_kafka(reset_offsets)
 
+        self.shutdown = 0
+        signal.signal(signal.SIGTERM, self._stop_handler)
+        signal.signal(signal.SIGINT, self._stop_handler)
+        signal.signal(signal.SIGHUP, self._hup_handler)
+
     def _load_config(self):
         self.config = ConfigParser.ConfigParser()
         self.config.readfp(open(self.config_file))
@@ -45,8 +43,12 @@ class Proxy:
         self._configure_logging()
 
     def _configure_logging(self):
+        part_name = 'ALL'
+        if self.partition is not None:
+            part_name = str(self.partition)
         logging.basicConfig(level=self.config.get('logging', 'loglevel'),
-                            format='%(asctime)s|TSK|EX' + str(self.id) + '|%(levelname)s: %(message)s',
+                            format='%(asctime)s|TSK|PART-' + part_name
+                                   + '|%(levelname)s: %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S')
 
     def _init_timeseries(self):
@@ -63,30 +65,29 @@ class Proxy:
 
     def _init_kafka(self, reset_offsets=False):
         # connect to kafka
-        if self.config.get('kafka', 'use_rdkafka') == 'True':
-            use_rdkafka = True
-        else:
-            use_rdkafka = False
-        self.kc = pykafka.KafkaClient(hosts=self.config.get('kafka', 'brokers'))
         topic_name = "%s.%s" % (self.config.get('kafka', 'topic_prefix'),
                                 self.config.get('kafka', 'channel'))
-        # it seems the managed consumer doesn't do well with multiple topics on
-        # a single consumer group, so we namespace our group to include the
-        # topic name
         consumer_group = "%s.%s" % (self.config.get('kafka', 'consumer_group'),
                                     topic_name)
-        self.consumer = self.kc.topics[topic_name]\
-            .get_balanced_consumer(consumer_group,
-                                   managed=False, use_rdkafka=use_rdkafka,
-                                   zookeeper_connect=self.config.get('kafka',
-                                                                     'zookeeper'),
-                                   auto_commit_enable=True,
-                                   auto_offset_reset=pykafka.common.OffsetType.EARLIEST,
-                                   consumer_timeout_ms=10000)
+        conf = {
+            'bootstrap.servers': self.config.get('kafka', 'brokers'),
+            'group.id': consumer_group,
+            'default.topic.config': {'auto.offset.reset': 'earliest'},
+            'heartbeat.interval.ms': 60000,
+            'api.version.request': True,
+        }
+        self.kc = confluent_kafka.Consumer(**conf)
+
+        if self.partition:
+            topic_list = [confluent_kafka.TopicPartition(topic_name,
+                                                         self.partition)]
+            self.kc.assign(topic_list)
+        else:
+            self.kc.subscribe([topic_name])
 
         if reset_offsets:
             logging.info("Resetting commited offsets")
-            self.consumer.reset_offsets()
+            raise NotImplementedError
 
     def _stop_handler(self, _signo, _stack_frame):
         logging.info("Caught signal, shutting down at next opportunity")
@@ -100,26 +101,23 @@ class Proxy:
         logging.error("NOT IMPLEMENTED")
         self.shutdown += 1
 
-    def _maybe_flush(self, time=None):
+    def _maybe_flush(self, flush_time=None):
         # if this is not our first message, and this time is different than
         # the current time, we need to dump the KP
         if not self.current_time:
-            self.current_time = time
-        elif not time or (time != self.current_time):
+            self.current_time = flush_time
+        elif not flush_time or (flush_time != self.current_time):
             # now flush the key package
             logging.debug("Flushing KP at %d with %d keys enabled (%d total)" %
                           (self.current_time, self.kp.enabled_size,
                            self.kp.size))
-            try:
-                self.kp.flush(self.current_time)
-            except RuntimeError:
-                logging.error("Failed to flush KP")
+            self.kp.flush(self.current_time)
             # all keys are reset now
             assert(self.kp.enabled_size == 0)
-            self.current_time = time
+            self.current_time = flush_time
 
     def _handle_msg(self, msgbuf):
-        time, version, channel, offset = self._parse_header(msgbuf)
+        msg_time, version, channel, offset = self._parse_header(msgbuf)
         if version != TSKBATCH_VERSION:
             logging.error("Message with unknown version %d, expecting %d" %
                           (version, TSKBATCH_VERSION))
@@ -129,7 +127,7 @@ class Proxy:
                           (channel, self.config.get('kafka', 'channel')))
             return
 
-        self._maybe_flush(time)
+        self._maybe_flush(msg_time)
 
         msgbuflen = len(msgbuf)
         while offset < msgbuflen:
@@ -166,34 +164,31 @@ class Proxy:
 
     def run(self):
         logging.info("TSK Proxy starting...")
-        logging.info("Waiting 20s for other workers to start...")
-        time.sleep(20)
-        # since_rebalance=0
         while True:
-            # if since_rebalance >= 30:
-            #    logging.info("Forcing a rebalance")
-            #    self.consumer._rebalance()
-            #    since_rebalance = 0
-            # since_rebalance += 1
             logging.info("Forcing a flush")
             self._maybe_flush()
             # if we have been asked to shut down, do it now
             if self.shutdown:
                 self._maybe_flush()
+                self.kc.close()
                 logging.info("Shutdown complete")
                 return
             # process some messages!
-            for msg in self.consumer:
-                if msg is not None:
-                    # will retry until successful...
-                    self._handle_msg(buffer(msg.value))
+            msg = self.kc.poll(10000)
+            while msg is not None:
+                if not msg.error():
+                    self._handle_msg(buffer(msg.value()))
+                elif msg.error().code() == \
+                        confluent_kafka.KafkaError._PARTITION_EOF:
+                    # no new messages, force a flush
+                    break
+                else:
+                    logging.error("Unhandled Kafka error, shutting down")
+                    logging.error(msg.error())
+                    self.shutdown = True
                 if self.shutdown:
                     break
-
-
-def run_thread(args, executor_id):
-    proxy = Proxy(executor_id=executor_id, **args)
-    proxy.run()
+                msg = self.kc.poll(10000)
 
 
 def main():
@@ -209,26 +204,11 @@ def main():
                         action='store_true', required=False,
                         help='Reset committed offsets')
 
-    parser.add_argument('-p',  '--thread-cnt',
-                        nargs='?', required=False, default=1, type=int,
-                        help='Number of worker threads to run')
+    parser.add_argument('-p',  '--partition',
+                        nargs='?', required=False, default=None, type=int,
+                        help='Partition to process (default: all)')
 
     opts = vars(parser.parse_args())
 
-    args = {
-        'config_file': opts['config_file'],
-        'reset_offsets': opts['reset_offsets'],
-    }
-
-    # ignore sigint because our children will handle it, shut down and then
-    # we will...
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-
-    with concurrent.futures.ProcessPoolExecutor(max_workers=opts['thread_cnt']) \
-            as executor:
-        futures = [executor.submit(run_thread, args, id)
-                   for id in range(0, opts['thread_cnt'])]
-        for future in concurrent.futures.as_completed(futures):
-            future.result()
+    proxy = Proxy(**opts)
+    proxy.run()
