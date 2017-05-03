@@ -175,13 +175,17 @@ class Proxy:
                 return
             # process some messages!
             msg = self.kc.poll(10000)
+            eof_since_data = 0
             while msg is not None:
                 if not msg.error():
                     self._handle_msg(buffer(msg.value()))
+                    eof_since_data = 0
                 elif msg.error().code() == \
                         confluent_kafka.KafkaError._PARTITION_EOF:
-                    # no new messages, force a flush
-                    break
+                    # no new messages, wait a bit and then force a flush
+                    eof_since_data += 1
+                    if eof_since_data >= 10:
+                        break
                 else:
                     logging.error("Unhandled Kafka error, shutting down")
                     logging.error(msg.error())
