@@ -4,6 +4,7 @@ import confluent_kafka
 import logging
 import os
 import _pytimeseries
+import pytimeseries.utils
 import signal
 import struct
 import sys
@@ -96,7 +97,16 @@ class Proxy:
         self.stats_time = self._stats_interval_now()
 
     def _inc_stat(self, stat, value):
-        key = "%s.%s.%s" % (STAT_METRIC_PFX, self.consumer_group, stat)
+        key = ".".join([
+            STAT_METRIC_PFX,
+            pytimeseries.utils.graphite_safe_node(
+                self.config.get('kafka', 'consumer_group')),
+            pytimeseries.utils.graphite_safe_node(
+                self.config.get('kafka', 'topic_prefix')),
+            pytimeseries.utils.graphite_safe_node(
+                self.config.get('kafka', 'channel')),
+            stat,
+        ])
         idx = self.stats_kp.get_key(key)
         if idx is None:
             idx = self.stats_kp.add_key(key)
