@@ -105,7 +105,7 @@ class Proxy:
 
     def _maybe_flush_stats(self):
         now = self._stats_interval_now()
-        if now > (self.stats_time + self.stats_interval):
+        if now >= (self.stats_time + self.stats_interval):
             logging.debug("Flushing stats at %d" % self.stats_time)
             self.stats_kp.flush(self.stats_time)
             self.stats_time = now
