@@ -7,10 +7,13 @@ import _pytimeseries
 import signal
 import struct
 import sys
+import time
 
 HEADER_MAGIC_LEN = 8
 
 TSKBATCH_VERSION = 0
+
+STAT_METRIC_PFX = "systems.services.tsk"
 
 
 class Proxy:
@@ -24,12 +27,22 @@ class Proxy:
 
         # initialize libtimeseries
         self.ts = None
+        self.kp = None
         self.current_time = None
         self._init_timeseries()
 
+        self.topic_name = None
+        self.consumer_group = None
         self.kc = None
         self.consumer = None
         self._init_kafka(reset_offsets)
+
+        # set up stats (needs kafka to be init first)
+        self.stats_ts = None
+        self.stats_kp = None
+        self.stats_time = None
+        self.stats_interval = 0
+        self._init_stats()
 
         self.shutdown = 0
         signal.signal(signal.SIGTERM, self._stop_handler)
@@ -58,20 +71,55 @@ class Proxy:
             logging.info("Enabling timeseries backend '%s'" % name)
             be = self.ts.get_backend_by_name(name)
             if not be:
-                logging.error("Could not enable TS backend %s" % name)
+                raise ValueError("Could not enable TS backend %s" % name)
             opts = self.config.get('timeseries', name + '-opts')
             self.ts.enable_backend(be, opts)
         self.kp = self.ts.new_keypackage(reset=False, disable=True)
 
+    def _stats_interval_now(self):
+        return int(time.time() / self.stats_interval) * self.stats_interval
+
+    def _init_stats(self):
+        self.stats_interval = int(self.config.get('stats', 'interval'))
+        if not self.stats_interval:
+            return
+        logging.info("Initializing Stats")
+        self.stats_ts = _pytimeseries.Timeseries()
+        be_name = self.config.get('stats', 'ts_backend')
+        be = self.stats_ts.get_backend_by_name(be_name)
+        if not be:
+            raise ValueError("Could not find TS backend %s" % be_name)
+        opts = self.config.get('stats', 'ts_opts')
+        if not self.stats_ts.enable_backend(be, opts):
+            raise RuntimeError("Could not enable stats TS backend %s" % be_name)
+        self.stats_kp = self.stats_ts.new_keypackage(reset=True, disable=False)
+        self.stats_time = self._stats_interval_now()
+
+    def _inc_stat(self, stat, value):
+        key = "%s.%s.%s" % (STAT_METRIC_PFX, self.consumer_group, stat)
+        idx = self.stats_kp.get_key(key)
+        if idx is None:
+            idx = self.stats_kp.add_key(key)
+        old = self.stats_kp.get(idx)
+        self.stats_kp.set(idx, old + value)
+
+    def _maybe_flush_stats(self):
+        now = self._stats_interval_now()
+        if now > (self.stats_time + self.stats_interval):
+            logging.debug("Flushing stats at %d" % self.stats_time)
+            self.stats_kp.flush(self.stats_time)
+            self.stats_time = now
+
     def _init_kafka(self, reset_offsets=False):
         # connect to kafka
-        topic_name = "%s.%s" % (self.config.get('kafka', 'topic_prefix'),
-                                self.config.get('kafka', 'channel'))
-        consumer_group = "%s.%s" % (self.config.get('kafka', 'consumer_group'),
-                                    topic_name)
+        self.topic_name = "%s.%s" % (self.config.get('kafka', 'topic_prefix'),
+                                     self.config.get('kafka', 'channel'))
+        self.consumer_group = "%s.%s" % \
+                              (self.config.get('kafka', 'consumer_group'),
+                               self.topic_name)
         conf = {
             'bootstrap.servers': self.config.get('kafka', 'brokers'),
-            'group.id': consumer_group,
+            'group.id': self.consumer_group,
             'default.topic.config': {'auto.offset.reset': 'earliest'},
             'heartbeat.interval.ms': 60000,
             'api.version.request': True,
@@ -79,11 +127,11 @@ class Proxy:
         self.kc = confluent_kafka.Consumer(**conf)
 
         if self.partition:
-            topic_list = [confluent_kafka.TopicPartition(topic_name,
+            topic_list = [confluent_kafka.TopicPartition(self.topic_name,
                                                          self.partition)]
             self.kc.assign(topic_list)
         else:
-            self.kc.subscribe([topic_name])
+            self.kc.subscribe([self.topic_name])
 
         if reset_offsets:
             logging.info("Resetting commited offsets")
@@ -111,6 +159,8 @@ class Proxy:
             logging.debug("Flushing KP at %d with %d keys enabled (%d total)" %
                           (self.current_time, self.kp.enabled_size,
                            self.kp.size))
+            self._inc_stat("flush_cnt", 1)
+            self._inc_stat("flushed_key_cnt", self.kp.enabled_size)
             self.kp.flush(self.current_time)
             # all keys are reset now
             assert(self.kp.enabled_size == 0)
@@ -118,6 +168,7 @@ class Proxy:
 
     def _handle_msg(self, msgbuf):
         msg_time, version, channel, offset = self._parse_header(msgbuf)
+        msgbuflen = len(msgbuf)
         if version != TSKBATCH_VERSION:
             logging.error("Message with unknown version %d, expecting %d" %
                           (version, TSKBATCH_VERSION))
@@ -129,7 +180,8 @@ class Proxy:
 
         self._maybe_flush(msg_time)
 
-        msgbuflen = len(msgbuf)
+        self._inc_stat("messages_cnt", 1)
+        self._inc_stat("messages_bytes", msgbuflen)
         while offset < msgbuflen:
             offset = self._parse_kv(msgbuf, offset)
 
@@ -167,6 +219,7 @@ class Proxy:
         while True:
             logging.info("Forcing a flush")
             self._maybe_flush()
+            self._maybe_flush_stats()
             # if we have been asked to shut down, do it now
             if self.shutdown:
                 self._maybe_flush()
@@ -193,6 +246,7 @@ class Proxy:
                 if self.shutdown:
                     break
                 msg = self.kc.poll(10000)
+                self._maybe_flush_stats()
 
 
 def main():

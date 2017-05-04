@@ -17,15 +17,21 @@ ascii-opts =
 
 brokers = localhost:9092
 
-# it seems the managed balanced consumer doesn't support rdkafka :/
-use_rdkafka = False
-
 topic_prefix = tsk-test
 
-# TSK channel to subscribe to (it seems pykafka doesn't support wildcard topic
-# subscriptions)
+# TSK channel to subscribe to
 channel = test-channel
 
 # allows multiple tsk-proxy instances to be used to load balance the incoming
 # messages.
 consumer_group = tsk-proxy
+
+[stats]
+
+# libtimeseries backend to use for TSK stats monitoring
+ts_backend = ascii
+# options for the given timeseries backend
+ts_opts =
+
+# stats update interval (0 disables stats)
+interval = 60
