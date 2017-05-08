@@ -177,7 +177,12 @@ class Proxy:
             self.current_time = flush_time
 
     def _handle_msg(self, msgbuf):
-        msg_time, version, channel, offset = self._parse_header(msgbuf)
+        try:
+            msg_time, version, channel, offset = self._parse_header(msgbuf)
+        except struct.error:
+            logging.error("Malformed message received from Kafka, skipping")
+            return
+
         msgbuflen = len(msgbuf)
         if version != TSKBATCH_VERSION:
             logging.error("Message with unknown version %d, expecting %d" %
@@ -193,7 +198,11 @@ class Proxy:
         self._inc_stat("messages_cnt", 1)
         self._inc_stat("messages_bytes", msgbuflen)
         while offset < msgbuflen:
-            offset = self._parse_kv(msgbuf, offset)
+            try:
+                offset = self._parse_kv(msgbuf, offset)
+            except struct.error:
+                logging.error("Could not parse key/value")
+                return
 
     @staticmethod
     def _parse_header(msgbuf):
