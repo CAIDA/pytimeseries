@@ -293,7 +293,7 @@ def main():
                         help='Partition to process (default: all)')
 
     parser.add_argument('-i',  '--instance',
-                        nargs='?', required=True,
+                        nargs='?', required=False,
                         help='The name of this instance (default: unset)')
 
     opts = vars(parser.parse_args())
