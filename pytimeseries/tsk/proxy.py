@@ -19,9 +19,11 @@ STAT_METRIC_PFX = "systems.services.tsk"
 
 class Proxy:
 
-    def __init__(self, config_file, reset_offsets, partition=None):
+    def __init__(self, config_file, reset_offsets,
+                 partition=None, instance=None):
         self.config_file = os.path.expanduser(config_file)
         self.partition = partition
+        self.instance = instance
 
         self.config = None
         self._load_config()
@@ -97,6 +99,11 @@ class Proxy:
         self.stats_time = self._stats_interval_now()
 
     def _inc_stat(self, stat, value):
+        if self.instance is not None:
+            stat = ".".join([
+                pytimeseries.utils.graphite_safe_node(self.instance),
+                stat
+            ])
         key = ".".join([
             STAT_METRIC_PFX,
             pytimeseries.utils.graphite_safe_node(
@@ -105,7 +112,7 @@ class Proxy:
                 self.config.get('kafka', 'topic_prefix')),
             pytimeseries.utils.graphite_safe_node(
                 self.config.get('kafka', 'channel')),
-            stat,
+            stat
         ])
         idx = self.stats_kp.get_key(key)
         if idx is None:
@@ -284,6 +291,10 @@ def main():
     parser.add_argument('-p',  '--partition',
                         nargs='?', required=False, default=None, type=int,
                         help='Partition to process (default: all)')
+
+    parser.add_argument('-i',  '--instance',
+                        nargs='?', required=True,
+                        help='The name of this instance (default: unset)')
 
     opts = vars(parser.parse_args())
 
