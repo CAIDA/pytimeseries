@@ -11,6 +11,9 @@ HEADER_MAGIC_LEN = 8
 
 TSKBATCH_VERSION = 0
 
+# TODO: tune this
+TELEGRAF_BATCH_SIZE = 5000
+
 
 class TelegrafProxy:
 
@@ -20,8 +23,14 @@ class TelegrafProxy:
         self.config = None
         self._load_config()
 
+        # buffer of parsed series ready to be sent to kafka
+        self.series = []
+
         self.tsk_consumer = None
+        self.tsk_channel = None
         self._init_tsk_kafka()
+
+        # TODO: telegraf kafka producer config/init
 
         self.shutdown = 0
         signal.signal(signal.SIGTERM, self._stop_handler)
@@ -40,13 +49,14 @@ class TelegrafProxy:
 
     def _init_tsk_kafka(self):
         # connect to kafka
-        topic_name = "%s.%s" % (self.config.get('kafka', 'topic_prefix'),
-                                     self.config.get('kafka', 'channel'))
+        self.tsk_channel = self.config.get('tsk', 'channel')
+        topic_name = "%s.%s" % (self.config.get('tsk', 'topic_prefix'),
+                                self.tsk_channel)
         consumer_group = "%s.%s" % \
-                         (self.config.get('kafka', 'consumer_group'),
+                         (self.config.get('tsk', 'consumer_group'),
                           topic_name)
         conf = {
-            'bootstrap.servers': self.config.get('kafka', 'brokers'),
+            'bootstrap.servers': self.config.get('tsk', 'brokers'),
             'group.id': consumer_group,
             'default.topic.config': {'auto.offset.reset': 'earliest'},
             'heartbeat.interval.ms': 60000,
@@ -62,10 +72,18 @@ class TelegrafProxy:
             logging.warn("Caught %d signals, shutting down NOW" % self.shutdown)
             sys.exit(0)
 
-    def _maybe_tx(self):
+    def _maybe_tx(self, force=True):
         # if we have enough metrics in our buffer to fill an output message
         # then send that now and remove them from the buffer
-        pass
+        while len(self.series) >= TELEGRAF_BATCH_SIZE or (len(self.series) and force):
+            this_batch = self.series[:TELEGRAF_BATCH_SIZE]
+            self.series = self.series[TELEGRAF_BATCH_SIZE:]
+            msg = "\n".join(this_batch)
+            sys.stderr.write("MSGBUF LEN: %d\n" % len(msg))
+            # TODO: send msg to telegraf kafka
+
+        if force:
+            assert len(self.series) == 0
 
     def _handle_msg(self, msgbuf):
         try:
@@ -79,16 +97,16 @@ class TelegrafProxy:
             logging.error("Message with unknown version %d, expecting %d" %
                           (version, TSKBATCH_VERSION))
             return
-        if channel != self.config.get('kafka', 'channel'):
+        if channel != self.tsk_channel:
             logging.error("Message with unknown channel %s, expecting %s" %
-                          (channel, self.config.get('kafka', 'channel')))
+                          (channel, self.tsk_channel))
             return
 
-        self._maybe_tx()
+        self._maybe_tx(force=False)
 
         while offset < msgbuflen:
             try:
-                offset = self._parse_kv(msgbuf, offset)
+                offset = self._parse_kv(msg_time, msgbuf, offset)
             except struct.error:
                 logging.error("Could not parse key/value")
                 return
@@ -107,16 +125,88 @@ class TelegrafProxy:
 
         return time, version, channel, offset
 
-    def _parse_kv(self, msgbuf, offset):
+    def _parse_kv(self, time, msgbuf, offset):
         (keylen,) = struct.unpack_from("!H", msgbuf, offset)
         offset += 2
         (key, val, ) = struct.unpack_from("!%dsQ" % keylen, msgbuf, offset)
         offset += keylen + 8
 
-        # TODO parse graphite path into influx format
-        # TODO add metric to buffer
+        # TODO: support coalescing of fields (they will often be adjacent in the TSK message)
+        tg_key, tg_field = self._parse_key(key)
+        self.series.append("%s %s=%di %d" % (tg_key, tg_field, val, time * 1e9))
 
         return offset
+
+    def _parse_key(self, key):
+        measurement = "ping-slash24"
+        tagset = []
+        field = None
+        # TODO: better (config-based) parsing of graphite metrics?
+        nodes = key.split(".")
+        assert key.startswith("active.ping-slash24.") # nodes[0],nodes[1] are constant
+
+        # basically walk down the hierarchy to figure out tags/fields
+        # if parsing fails, leave field unset to raise an exception
+        # TODO: handle non-aggregated slash24 metrics
+        if nodes[2] == "asn":
+            # active.ping-slash24.asn.1968.probers.team-1.caida-sdsc.prober-3.uncertain_slash24_cnt
+            tagset.append(("asn", nodes[3]))
+            tagset.append(("team", nodes[5]))  # nodes[6] is "caida-sdsc"
+            tagset.append(("prober", nodes[7]))
+            leaf = nodes[8].split("_")
+            tagset.append(("state", leaf[0]))
+            field = "_".join(leaf[1:])
+        elif nodes[2] == "geo":
+            # active.ping-slash24.geo.netacuity.NA.probers.team-1.caida-sdsc.prober-1.uncertain_slash24_cnt
+            tagset.append(("geo_db", nodes[3]))
+            tagset.append(("continent", nodes[4]))
+            remain = []
+            if nodes[5] == "probers":
+                # continent
+                remain = nodes[5:]
+            elif nodes[6] == "probers":
+                # country
+                tagset.append(("country", nodes[5]))
+                remain = nodes[6:]
+            elif nodes[7] == "probers":
+                # region
+                tagset.append(("country", nodes[5]))
+                tagset.append(("region", nodes[6]))
+                remain = nodes[7:]
+            elif nodes[8] == "probers":
+                # county
+                tagset.append(("country", nodes[5]))
+                tagset.append(("region", nodes[6]))
+                tagset.append(("county", nodes[7]))
+                remain = nodes[8:]
+
+            if remain[0] == "probers":  # just to be sure...
+                tagset.append(("team", remain[1]))
+                tagset.append(("prober", remain[3]))
+                leaf = remain[4].split("_")
+                tagset.append(("state", leaf[0]))
+                field = "_".join(leaf[1:])
+
+        elif nodes[2] == "probers":
+            tagset.append(("team", nodes[3]))  # nodes[4] is "caida-sdsc"
+            tagset.append(("prober", nodes[5]))
+            if nodes[6] == "meta":
+                field = "_".join(nodes[7:])
+            elif nodes[6] == "probing":
+                tagset.append(("probing_mode", nodes[7]))
+                field = nodes[8]
+            elif nodes[6] == "slash24_cnt":
+                field = nodes[6]
+            elif nodes[6] == "states":
+                leaf = nodes[7].split("_")
+                tagset.append(("state", leaf[0]))
+                field = "_".join(leaf[1:])
+
+        if field is None:
+            raise ValueError(key)
+
+        key = "%s,%s" % (measurement, ",".join(["=".join(tag) for tag in tagset]))
+        return key, field
 
     def run(self):
         logging.info("TSK Proxy starting...")
