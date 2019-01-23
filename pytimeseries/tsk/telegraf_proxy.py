@@ -25,12 +25,18 @@ class TelegrafProxy:
 
         # buffer of parsed series ready to be sent to kafka
         self.series = []
+        # current timestamp we're processing
+        self.current_time = None
+        # number of series we've proxied in this timestamp
+        self.series_cnt = 0
 
         self.tsk_consumer = None
         self.tsk_channel = None
         self._init_tsk_kafka()
 
-        # TODO: telegraf kafka producer config/init
+        self.telegraf_topic = None
+        self.telegraf_producer = None
+        self._init_telegraf_kafka()
 
         self.shutdown = 0
         signal.signal(signal.SIGTERM, self._stop_handler)
@@ -65,6 +71,15 @@ class TelegrafProxy:
         self.tsk_consumer = confluent_kafka.Consumer(**conf)
         self.tsk_consumer.subscribe([topic_name])
 
+    def _init_telegraf_kafka(self):
+        # connect to kafka
+        self.telegraf_topic = self.config.get('telegraf', 'topic')
+        conf = {
+            'bootstrap.servers': self.config.get('telegraf', 'brokers'),
+        }
+        self.telegraf_producer = confluent_kafka.Producer(conf)
+        logging.info("Initialized telegraf kafka producer (topic: %s)" % self.telegraf_topic)
+
     def _stop_handler(self, _signo, _stack_frame):
         logging.info("Caught signal, shutting down at next opportunity")
         self.shutdown += 1
@@ -78,9 +93,8 @@ class TelegrafProxy:
         while len(self.series) >= TELEGRAF_BATCH_SIZE or (len(self.series) and force):
             this_batch = self.series[:TELEGRAF_BATCH_SIZE]
             self.series = self.series[TELEGRAF_BATCH_SIZE:]
-            msg = "\n".join(this_batch)
-            sys.stderr.write("MSGBUF LEN: %d\n" % len(msg))
-            # TODO: send msg to telegraf kafka
+            self.telegraf_producer.poll(0)
+            self.telegraf_producer.produce(self.telegraf_topic, "\n".join(this_batch))
 
         if force:
             assert len(self.series) == 0
@@ -91,6 +105,12 @@ class TelegrafProxy:
         except struct.error:
             logging.error("Malformed message received from Kafka, skipping")
             return
+
+        if msg_time != self.current_time:
+            if self.current_time is not None:
+                logging.info("Proxied %d series at time %d" % (self.series_cnt, self.current_time))
+            self.series_cnt = 0
+            self.current_time = msg_time
 
         msgbuflen = len(msgbuf)
         if version != TSKBATCH_VERSION:
@@ -134,6 +154,7 @@ class TelegrafProxy:
         # TODO: support coalescing of fields (they will often be adjacent in the TSK message)
         tg_key, tg_field = self._parse_key(key)
         self.series.append("%s %s=%di %d" % (tg_key, tg_field, val, time * 1e9))
+        self.series_cnt += 1
 
         return offset
 
@@ -217,6 +238,7 @@ class TelegrafProxy:
             if self.shutdown:
                 self._maybe_tx()
                 self.tsk_consumer.close()
+                self.telegraf_producer.flush()
                 logging.info("Shutdown complete")
                 return
             # process some messages!
