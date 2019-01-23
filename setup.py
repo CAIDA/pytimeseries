@@ -28,7 +28,8 @@ setup(name="pytimeseries",
       ext_modules=[_pytimeseries_module, ],
       packages=find_packages(),
       entry_points={'console_scripts': [
-          'pytsk-proxy=pytimeseries.tsk.proxy:main'
+          'pytsk-proxy=pytimeseries.tsk.proxy:main',
+          'pytsk-telegraf-proxy=pytimeseries.tsk.telegraf_proxy:main',
       ]},
       install_requires=['confluent-kafka']
       )

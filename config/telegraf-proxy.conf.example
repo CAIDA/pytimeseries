@@ -1,0 +1,29 @@
+# Sample configuration file for the TSK Proxy
+
+[logging]
+
+# Verbosity of logging used.
+loglevel = DEBUG
+
+[telegraf]
+
+# Kafka cluster to publish telegraf metrics to
+brokers = localhost:9092
+
+# Topic to public metrics to
+topic = "telegraf-test"
+
+# TODO: fancy mappings from graphite metric to influx tags etc.
+
+[tsk]
+
+brokers = localhost:9092
+
+topic_prefix = tsk-test
+
+# TSK channel to subscribe to
+channel = test-channel
+
+# allows multiple tsk-proxy instances to be used to load balance the incoming
+# messages.
+consumer_group = tsk-proxy
