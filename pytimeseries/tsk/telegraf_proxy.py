@@ -159,26 +159,36 @@ class TelegrafProxy:
         return offset
 
     def _parse_key(self, key):
-        measurement = "ping-slash24"
+        measurement = None
         tagset = []
         field = None
         # TODO: better (config-based) parsing of graphite metrics?
         nodes = key.split(".")
-        assert key.startswith("active.ping-slash24.") # nodes[0],nodes[1] are constant
+        assert key.startswith("active.ping-slash24.")  # nodes[0],nodes[1] are constant
 
         # basically walk down the hierarchy to figure out tags/fields
         # if parsing fails, leave field unset to raise an exception
-        # TODO: handle non-aggregated slash24 metrics
         if nodes[2] == "asn":
             # active.ping-slash24.asn.1968.probers.team-1.caida-sdsc.prober-3.uncertain_slash24_cnt
+            measurement = "routing"
+
             tagset.append(("asn", nodes[3]))
             tagset.append(("team", nodes[5]))  # nodes[6] is "caida-sdsc"
             tagset.append(("prober", nodes[7]))
-            leaf = nodes[8].split("_")
-            tagset.append(("state", leaf[0]))
-            field = "_".join(leaf[1:])
+
+            if nodes[8] == "blocks":
+                block = nodes[9].replace("__PFX_", "").replace("-", ".").replace("_", "/")
+                tagset.append(("block", block))
+                field = nodes[10]
+            elif nodes[8].endswith("_slash24_cnt"):
+                leaf = nodes[8].split("_")
+                tagset.append(("state", leaf[0]))
+                field = "_".join(leaf[1:])
+
         elif nodes[2] == "geo":
             # active.ping-slash24.geo.netacuity.NA.probers.team-1.caida-sdsc.prober-1.uncertain_slash24_cnt
+            measurement = "geo"
+
             tagset.append(("geo_db", nodes[3]))
             tagset.append(("continent", nodes[4]))
             remain = []
@@ -209,6 +219,8 @@ class TelegrafProxy:
                 field = "_".join(leaf[1:])
 
         elif nodes[2] == "probers":
+            measurement = "overall"
+
             tagset.append(("team", nodes[3]))  # nodes[4] is "caida-sdsc"
             tagset.append(("prober", nodes[5]))
             if nodes[6] == "meta":
@@ -223,7 +235,7 @@ class TelegrafProxy:
                 tagset.append(("state", leaf[0]))
                 field = "_".join(leaf[1:])
 
-        if field is None:
+        if measurement is None or field is None:
             raise ValueError(key)
 
         key = "%s,%s" % (measurement, ",".join(["=".join(tag) for tag in tagset]))
