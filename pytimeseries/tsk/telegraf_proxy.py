@@ -76,6 +76,7 @@ class TelegrafProxy:
         self.telegraf_topic = self.config.get('telegraf', 'topic')
         conf = {
             'bootstrap.servers': self.config.get('telegraf', 'brokers'),
+            'compression.type': 'gzip',
         }
         self.telegraf_producer = confluent_kafka.Producer(conf)
         logging.info("Initialized telegraf kafka producer (topic: %s)" % self.telegraf_topic)
