@@ -307,7 +307,7 @@ def main():
     libtimeseries backends
     """)
     parser.add_argument('-c',  '--config-file',
-                        nargs='?', required=True,
+                        required=True,
                         help='Configuration filename')
 
     parser.add_argument('-r',  '--reset-offsets',
@@ -315,11 +315,11 @@ def main():
                         help='Reset committed offsets')
 
     parser.add_argument('-p',  '--partition',
-                        nargs='?', required=False, default=None, type=int,
+                        required=False, default=None, type=int,
                         help='Partition to process (default: all)')
 
     parser.add_argument('-i',  '--instance',
-                        nargs='?', required=False,
+                        required=False,
                         help='The name of this instance (default: unset)')
 
     opts = vars(parser.parse_args())
