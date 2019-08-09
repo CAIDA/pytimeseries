@@ -326,3 +326,7 @@ def main():
 
     proxy = Proxy(**opts)
     proxy.run()
+
+
+if __name__ == '__main__':
+    main()
