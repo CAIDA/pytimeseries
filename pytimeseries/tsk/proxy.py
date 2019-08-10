@@ -125,6 +125,8 @@ class Proxy:
         self.stats_time = self._stats_interval_now()
 
     def _inc_stat(self, stat, value):
+        if not self.stats_interval:
+            return
         if self.instance is not None:
             stat = ".".join([
                 pytimeseries.utils.graphite_safe_node(self.instance),
@@ -147,6 +149,8 @@ class Proxy:
         self.stats_kp.set(idx, old + value)
 
     def _maybe_flush_stats(self):
+        if not self.stats_interval:
+            return
         now = self._stats_interval_now()
         if now >= (self.stats_time + self.stats_interval):
             logging.debug("Flushing stats at %d" % self.stats_time)
