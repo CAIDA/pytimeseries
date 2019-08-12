@@ -43,6 +43,41 @@ TSKBATCH_VERSION = 0
 STAT_METRIC_PFX = "systems.services.tsk"
 
 
+class TskReader:
+
+    def __init__(self, topic_prefix, channel, consumer_group, brokers,
+                 partition, reset_offsets):
+        # connect to kafka
+        self.topic_name = ".".join([topic_prefix, channel])
+        self.consumer_group = ".".join([consumer_group, self.topic_name])
+        self.partition = partition
+        conf = {
+            'bootstrap.servers': brokers,
+            'group.id': self.consumer_group,
+            'default.topic.config': {'auto.offset.reset': 'earliest'},
+            'heartbeat.interval.ms': 60000,
+            'api.version.request': True,
+        }
+        self.kc = confluent_kafka.Consumer(conf)
+
+        if self.partition:
+            topic_list = [confluent_kafka.TopicPartition(self.topic_name,
+                                                         self.partition)]
+            self.kc.assign(topic_list)
+        else:
+            self.kc.subscribe([self.topic_name])
+
+        if reset_offsets:
+            logging.info("Resetting commited offsets")
+            raise NotImplementedError
+
+    def close(self):
+        return self.kc.close()
+
+    def poll(self, time):
+        return self.kc.poll(time)
+
+
 class Proxy:
 
     def __init__(self, config_file, reset_offsets,
@@ -60,11 +95,13 @@ class Proxy:
         self.current_time = None
         self._init_timeseries()
 
-        self.topic_name = None
-        self.consumer_group = None
-        self.kc = None
-        self.consumer = None
-        self._init_kafka(reset_offsets)
+        self.tsk_reader = TskReader(
+            self.config.get('kafka', 'topic_prefix'),
+            self.config.get('kafka', 'channel'),
+            self.config.get('kafka', 'consumer_group'),
+            self.config.get('kafka', 'brokers'),
+            self.partition,
+            reset_offsets)
 
         # set up stats (needs kafka to be init first)
         self.stats_ts = None
@@ -156,33 +193,6 @@ class Proxy:
             logging.debug("Flushing stats at %d" % self.stats_time)
             self.stats_kp.flush(self.stats_time)
             self.stats_time = now
-
-    def _init_kafka(self, reset_offsets=False):
-        # connect to kafka
-        self.topic_name = "%s.%s" % (self.config.get('kafka', 'topic_prefix'),
-                                     self.config.get('kafka', 'channel'))
-        self.consumer_group = "%s.%s" % \
-                              (self.config.get('kafka', 'consumer_group'),
-                               self.topic_name)
-        conf = {
-            'bootstrap.servers': self.config.get('kafka', 'brokers'),
-            'group.id': self.consumer_group,
-            'default.topic.config': {'auto.offset.reset': 'earliest'},
-            'heartbeat.interval.ms': 60000,
-            'api.version.request': True,
-        }
-        self.kc = confluent_kafka.Consumer(**conf)
-
-        if self.partition:
-            topic_list = [confluent_kafka.TopicPartition(self.topic_name,
-                                                         self.partition)]
-            self.kc.assign(topic_list)
-        else:
-            self.kc.subscribe([self.topic_name])
-
-        if reset_offsets:
-            logging.info("Resetting commited offsets")
-            raise NotImplementedError
 
     def _stop_handler(self, _signo, _stack_frame):
         logging.info("Caught signal, shutting down at next opportunity")
@@ -279,11 +289,11 @@ class Proxy:
             # if we have been asked to shut down, do it now
             if self.shutdown:
                 self._maybe_flush()
-                self.kc.close()
+                self.tsk_reader.close()
                 logging.info("Shutdown complete")
                 return
             # process some messages!
-            msg = self.kc.poll(10000)
+            msg = self.tsk_reader.poll(10000)
             eof_since_data = 0
             while msg is not None:
                 if not msg.error():
@@ -301,7 +311,7 @@ class Proxy:
                     self.shutdown = True
                 if self.shutdown:
                     break
-                msg = self.kc.poll(10000)
+                msg = self.tsk_reader.poll(10000)
                 self._maybe_flush_stats()
 
 
