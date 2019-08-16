@@ -25,7 +25,7 @@
 #
 
 import argparse
-import ConfigParser
+import configparser
 import confluent_kafka
 import logging
 import os
@@ -116,7 +116,7 @@ class Proxy:
         signal.signal(signal.SIGHUP, self._hup_handler)
 
     def _load_config(self):
-        self.config = ConfigParser.ConfigParser()
+        self.config = configparser.ConfigParser()
         self.config.readfp(open(self.config_file))
         # configure_logging MUST come before any calls to logging
         self._configure_logging()
