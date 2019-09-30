@@ -46,7 +46,7 @@ STAT_METRIC_PFX = "systems.services.tsk"
 class TskReader:
 
     def __init__(self, topic_prefix, channel, consumer_group, brokers,
-                 partition, reset_offsets):
+                 partition=None, reset_offsets=False, commit_offsets=True):
         if sys.version_info[0] == 2:
             self.channel = channel
         else:
@@ -61,6 +61,7 @@ class TskReader:
             'default.topic.config': {'auto.offset.reset': 'earliest'},
             'heartbeat.interval.ms': 60000,
             'api.version.request': True,
+            'enable.auto.commit': commit_offsets,
         }
         self.kc = confluent_kafka.Consumer(conf)
 
