@@ -47,6 +47,10 @@ class TskReader:
 
     def __init__(self, topic_prefix, channel, consumer_group, brokers,
                  partition, reset_offsets):
+        if sys.version_info[0] == 2:
+            self.channel = channel
+        else:
+            self.channel = bytes(channel, 'ascii')
         # connect to kafka
         self.topic_name = ".".join([topic_prefix, channel])
         self.consumer_group = ".".join([consumer_group, self.topic_name])
@@ -76,6 +80,60 @@ class TskReader:
 
     def poll(self, time):
         return self.kc.poll(time)
+
+    def handle_msg(self, msgbuf, msg_cb, kv_cb):
+        try:
+            msg_time, version, channel, offset = self._parse_header(msgbuf)
+        except struct.error:
+            raise RuntimeError("malformed Kafka message")
+
+        msgbuflen = len(msgbuf)
+        if version != TSKBATCH_VERSION:
+            raise RuntimeError("Kafka message with version %d "
+                "(expected %d)" % (version, TSKBATCH_VERSION))
+        if channel != self.channel:
+            raise RuntimeError("Kafka message with channel %s "
+                "(expected %s)" % (channel, self.channel))
+
+        if msg_cb != None:
+            msg_cb(msg_time, version, channel, msgbuf, msgbuflen)
+
+        while offset < msgbuflen:
+            try:
+                key, val, offset = self._parse_kv(msgbuf, offset)
+            except struct.error:
+                raise RuntimeEerror("Could not parse Kafka key/value")
+            kv_cb(key, val)
+
+    # Parse 2-byte network-order length and a bytestring of that length.
+    # Return the bytestring and the new offset.
+    @staticmethod
+    def _parse_bytestr(msgbuf, offset):
+        (blen,) = struct.unpack_from("!H", msgbuf, offset)
+        offset += 2
+        (bstr,) = struct.unpack_from("!%ds" % blen, msgbuf, offset)
+        offset += blen
+        return bstr, offset
+
+    @staticmethod
+    def _parse_header(msgbuf):
+        # skip over the TSKBATCH magic
+        offset = HEADER_MAGIC_LEN
+
+        (version, time) = struct.unpack_from("!BL", msgbuf, offset)
+        offset += 1 + 4
+
+        channel, offset = TskReader._parse_bytestr(msgbuf, offset)
+
+        return time, version, channel, offset
+
+    def _parse_kv(self, msgbuf, offset):
+        key, offset = TskReader._parse_bytestr(msgbuf, offset)
+
+        (val, ) = struct.unpack_from("!Q", msgbuf, offset)
+        offset += 8
+
+        return key, val, offset
 
 
 class Proxy:
@@ -115,6 +173,8 @@ class Proxy:
         signal.signal(signal.SIGINT, self._stop_handler)
         signal.signal(signal.SIGHUP, self._hup_handler)
 
+        self.msgbuf = None # XXX
+
     def _load_config(self):
         self.config = configparser.ConfigParser()
         self.config.readfp(open(self.config_file))
@@ -143,7 +203,7 @@ class Proxy:
         self.kp = self.ts.new_keypackage(reset=False, disable=True)
 
     def _stats_interval_now(self):
-        return int(time.time() / self.stats_interval) * self.stats_interval
+        return (time.time() // self.stats_interval) * self.stats_interval
 
     def _init_stats(self):
         self.stats_interval = int(self.config.get('stats', 'interval'))
@@ -223,62 +283,26 @@ class Proxy:
             assert(self.kp.enabled_size == 0)
             self.current_time = flush_time
 
-    def _handle_msg(self, msgbuf):
-        try:
-            msg_time, version, channel, offset = self._parse_header(msgbuf)
-        except struct.error:
-            logging.error("Malformed message received from Kafka, skipping")
-            return
-
-        msgbuflen = len(msgbuf)
-        if version != TSKBATCH_VERSION:
-            logging.error("Message with unknown version %d, expecting %d" %
-                          (version, TSKBATCH_VERSION))
-            return
-        if channel != self.config.get('kafka', 'channel'):
-            logging.error("Message with unknown channel %s, expecting %s" %
-                          (channel, self.config.get('kafka', 'channel')))
-            return
-
+    def _msg_cb(self, msg_time, version, channel, msgbuf, msgbuflen):
         self._maybe_flush(msg_time)
-
         self._inc_stat("messages_cnt", 1)
         self._inc_stat("messages_bytes", msgbuflen)
-        while offset < msgbuflen:
-            try:
-                offset = self._parse_kv(msgbuf, offset)
-            except struct.error:
-                logging.error("Could not parse key/value")
-                return
+        # XXX
+        if self.msgbuf == None or self.msgbuf != msgbuf:
+            label = "new"
+        else:
+            label = "repeated"
+        logging.debug("#### %s msg: %d bytes at %d" %
+            (label, msgbuflen, msg_time))
+        self.msgbuf = msgbuf
 
-    @staticmethod
-    def _parse_header(msgbuf):
-        # skip over the TSKBATCH magic
-        offset = HEADER_MAGIC_LEN
-
-        (version, time, chanlen) = \
-            struct.unpack_from("!BLH", msgbuf, offset)
-        offset += 1 + 4 + 2
-
-        (channel,) = struct.unpack_from("%ds" % chanlen, msgbuf, offset)
-        offset += chanlen
-
-        return time, version, channel, offset
-
-    def _parse_kv(self, msgbuf, offset):
-        (keylen,) = struct.unpack_from("!H", msgbuf, offset)
-        offset += 2
-        (key, val, ) = struct.unpack_from("!%dsQ" % keylen, msgbuf, offset)
-        offset += keylen + 8
-
+    def _kv_cb(self, key, val):
         idx = self.kp.get_key(key)
         if idx is None:
             idx = self.kp.add_key(key)
         else:
             self.kp.enable_key(idx)
         self.kp.set(idx, val)
-
-        return offset
 
     def run(self):
         logging.info("TSK Proxy starting...")
@@ -297,7 +321,11 @@ class Proxy:
             eof_since_data = 0
             while msg is not None:
                 if not msg.error():
-                    self._handle_msg(buffer(msg.value()))
+                    try:
+                        self.tsk_reader.handle_msg(msg.value(),
+                            self._msg_cb, self._kv_cb)
+                    except RuntimeError as e:
+                        logging.error("Skipping " + str(e))
                     eof_since_data = 0
                 elif msg.error().code() == \
                         confluent_kafka.KafkaError._PARTITION_EOF:

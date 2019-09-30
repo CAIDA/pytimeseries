@@ -33,6 +33,12 @@
 
 #include "_pytimeseries_timeseries.h"
 
+#if PY_MAJOR_VERSION >= 3
+ #define PT_BYTESTR "y"
+#else
+ #define PT_BYTESTR "s"
+#endif
+
 typedef struct {
   PyObject_HEAD
 

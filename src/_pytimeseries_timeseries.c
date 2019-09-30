@@ -178,7 +178,7 @@ Timeseries_set_single(TimeseriesObject *self, PyObject *args)
   unsigned long long value;
   unsigned long time;
 
-  if (!PyArg_ParseTuple(args, "sKk", &key, &value, &time)) {
+  if (!PyArg_ParseTuple(args, PT_BYTESTR "Kk", &key, &value, &time)) {
     return NULL;
   }
 
