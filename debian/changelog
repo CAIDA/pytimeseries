@@ -1,0 +1,6 @@
+pytimeseries (1.1.0) unstable; urgency=medium
+
+  * First release of debian packaging for PyTimeSeries
+
+ -- Alistair King <software@caida.org>  Fri, 04 Oct 2019 10:53:39 -0700
+

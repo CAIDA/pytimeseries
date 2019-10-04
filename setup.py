@@ -35,7 +35,7 @@ _pytimeseries_module = Extension("_pytimeseries",
 
 setup(name="pytimeseries",
       description="A Python interface to libtimeseries",
-      version="1.0.0",
+      version="1.1.0",
       author="Alistair King",
       author_email="corsaro-info@caida.org",
       url="http://github.com/CAIDA/pytimeseries",

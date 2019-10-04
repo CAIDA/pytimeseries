@@ -1,0 +1,16 @@
+Source: pytimeseries
+Maintainer: CAIDA Software Maintainer <software@caida.org>
+Section: python
+Priority: optional
+Build-Depends: dh-python, debhelper (>= 9),
+  python3-setuptools, python3-all-dev, python3-confluent-kafka,
+  libtimeseries0-dev
+Standards-Version: 3.9.6
+Homepage: https://github.com/CAIDA/pytimeseries
+
+Package: python3-pytimeseries
+Architecture: any
+Depends: ${misc:Depends}, ${python3:Depends}, ${shlibs:Depends}
+Description: Python3 interface to libTimeSeries
+ Provides a Python interface to write data to time series DBs.
+
