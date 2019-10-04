@@ -86,7 +86,11 @@ Backend_repr(PyObject *pyself)
     PYSTR_FROMSTR("<"BackendTypeName" (id: %i, name: %s, enabled: %s)>");
 
   return
+#if PY_MAJOR_VERSION >= 3
+    PyUnicode_Format(pystr, arg_tuple);
+#else
     PyString_Format(pystr, arg_tuple);
+#endif
 }
 
 static PyMethodDef Backend_methods[] = {

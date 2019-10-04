@@ -62,7 +62,7 @@ KeyPackage_add_key(KeyPackageObject *self, PyObject *args)
   const char *key;
   int idx;
 
-  if (!PyArg_ParseTuple(args, "s", &key)) {
+  if (!PyArg_ParseTuple(args, PT_BYTESTR, &key)) {
     return NULL;
   }
 
@@ -79,7 +79,7 @@ KeyPackage_get_key(KeyPackageObject *self, PyObject *args)
   const char *key;
   int idx;
 
-  if (!PyArg_ParseTuple(args, "s", &key)) {
+  if (!PyArg_ParseTuple(args, PT_BYTESTR, &key)) {
     return NULL;
   }
 
