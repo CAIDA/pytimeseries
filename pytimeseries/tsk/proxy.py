@@ -174,8 +174,6 @@ class Proxy:
         signal.signal(signal.SIGINT, self._stop_handler)
         signal.signal(signal.SIGHUP, self._hup_handler)
 
-        self.msgbuf = None # XXX
-
     def _load_config(self):
         self.config = configparser.ConfigParser()
         self.config.readfp(open(self.config_file))
@@ -288,14 +286,6 @@ class Proxy:
         self._maybe_flush(msg_time)
         self._inc_stat("messages_cnt", 1)
         self._inc_stat("messages_bytes", msgbuflen)
-        # XXX
-        if self.msgbuf == None or self.msgbuf != msgbuf:
-            label = "new"
-        else:
-            label = "repeated"
-        logging.debug("#### %s msg: %d bytes at %d" %
-            (label, msgbuflen, msg_time))
-        self.msgbuf = msgbuf
 
     def _kv_cb(self, key, val):
         idx = self.kp.get_key(key)
