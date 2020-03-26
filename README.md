@@ -14,11 +14,11 @@ To get started using PyTimeSeries, first
 
 Then, you should be able to install PyTimeSeries.
 
-### Installing PyIPMeta from source
+### Installing PyTimeSeries from source
 
 ```
-$ git clone https://github.com/caida/pyipmeta.git
-$ cd pyipmeta
+$ git clone https://github.com/caida/pytimeseries.git
+$ cd pytimeseries
 $ python setup.py build_ext
 $ sudo python setup.py install
 ```
